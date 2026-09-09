@@ -63,7 +63,12 @@ export class AuthController {
 
     @Post('logout')
     @HttpCode(200)
-    async logout(@Body('refreshToken') refreshToken: string) {
+    async logout(
+        @Req() request: Request,
+        @Res({ passthrough: true }) response: Response,
+    ) {
+        const refreshToken = request.cookies?.refresh_token;
+        response.clearCookie('refresh_token', { path: '/auth/refresh' });
         return this.authService.logout(refreshToken);
     }
 

@@ -142,10 +142,12 @@ export class AuthService {
         return { rawToken, tokenHash };
     }
 
-    async logout(refreshTokenValue: string) {
-        const tokenHash = createHash('sha256')
-            .update(refreshTokenValue)
-            .digest('hex');
+    async logout(refreshTokenValue?: string) {
+        if (!refreshTokenValue) {
+            return { status: 'success', message: 'Already logged out' };
+        }
+
+        const tokenHash = createHash('sha256').update(refreshTokenValue).digest('hex');
 
         await this.prismaService.session.updateMany({
             where: { refreshToken: tokenHash, revokedAt: null },
