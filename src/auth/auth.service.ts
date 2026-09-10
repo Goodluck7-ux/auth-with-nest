@@ -14,6 +14,7 @@ export class AuthService {
 
     ) { }
 
+
     async register(data: { email: string; password: string; name: string }) {
         const existingUser = await this.usersService.findByEmail(data.email);
         if (existingUser) {
@@ -34,7 +35,11 @@ export class AuthService {
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        const passwordsMatch = await bcrypt.compare(data.password, user.password);
+        if (!user.password) {
+            throw new UnauthorizedException('This account uses Google sign-in. Please continue with Google.');
+        }
+
+        const passwordsMatch = await bcrypt.compare(data.password, user.password ?? '');
         if (!passwordsMatch) {
             throw new UnauthorizedException('Invalid credentials');
         }
@@ -155,6 +160,56 @@ export class AuthService {
         });
 
         return { status: 'success', message: 'Logged out successfully' };
+    }
+
+    async googleLogin(code: string) {
+        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                code,
+                client_id: process.env.GOOGLE_CLIENT_ID!,
+                client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+                redirect_uri: process.env.GOOGLE_CALLBACK_URL!,
+                grant_type: 'authorization_code',
+            }),
+        });
+
+        if (!tokenRes.ok) {
+            throw new UnauthorizedException('Failed to exchange Google authorization code');
+        }
+        const { access_token } = await tokenRes.json();
+
+        const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+            headers: { Authorization: `Bearer ${access_token}` },
+        });
+
+        if (!profileRes.ok) {
+            throw new UnauthorizedException('Failed to fetch Google profile');
+        }
+        const profile = await profileRes.json(); // { email, name, id, ... }
+
+        let user = await this.usersService.findByEmail(profile.email);
+        if (!user) {
+            user = await this.usersService.create({
+                email: profile.email,
+                name: profile.name,
+                password: null,
+            });
+        }
+
+        const payload = { email: user.email, sub: user.id, role: user.role };
+        const accessToken = await this.jwtService.signAsync(payload);
+
+        const { rawToken, tokenHash } = this.generateRefreshToken();
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 7);
+
+        await this.prismaService.session.create({
+            data: { userId: user.id, refreshToken: tokenHash, expiresAt },
+        });
+
+        return { accessToken, refreshToken: rawToken };
     }
 
 
